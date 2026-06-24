@@ -23,7 +23,7 @@ venv
 custom_components/hacs/hacs_frontend
 
 # Translation files
-custom_components/hacs/translations
+!custom_components/hacs/translations
 !custom_components/hacs/translations/en.json
 
 # Home Assistant configuration

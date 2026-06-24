@@ -14,7 +14,7 @@ from homeassistant.components.lovelace.system_health import system_health_info
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import Platform, __version__ as HAVERSION
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from .utils.session import async_close_hacs_session, async_create_hacs_session
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.start import async_at_start
@@ -60,7 +60,7 @@ async def _async_initialize_integration(
 
     hacs.log.info("Starting HACS[%s]", integration.version)
 
-    clientsession = async_get_clientsession(hass)
+    clientsession = await async_create_hacs_session()
 
     hacs.integration = integration
     hacs.version = integration.version
@@ -74,6 +74,7 @@ async def _async_initialize_integration(
     )
     hacs.system.running = True
     hacs.session = clientsession
+    hacs._hacs_session = clientsession
 
     hacs.core.lovelace_mode = LovelaceMode.YAML
     try:
@@ -216,6 +217,9 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
 
     hacs.set_stage(None)
     hacs.disable_hacs(HacsDisabledReason.REMOVED)
+
+    # Close the HACS-owned session (created with proxy support)
+    await async_close_hacs_session(getattr(hacs, "_hacs_session", None))
 
     hass.data.pop(DOMAIN, None)
 
