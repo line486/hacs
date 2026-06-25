@@ -15,7 +15,7 @@ variables:
 # ---------------------------------------------------------------------------
 lint:
   stage: lint
-  image: registry.cn-hangzhou.aliyuncs.com/37/python:3.13-slim
+  image: python:3.13-slim
   cache:
     key: pip-${CI_COMMIT_REF_SLUG}
     paths:
@@ -33,7 +33,7 @@ lint:
 
 lint-json:
   stage: lint
-  image: registry.cn-hangzhou.aliyuncs.com/37/python:3.13-slim
+  image: python:3.13-slim
   script:
     - sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
     - apt-get update && apt-get install -y --no-install-recommends jq
@@ -47,16 +47,19 @@ lint-json:
 # ---------------------------------------------------------------------------
 pytest:
   stage: test
-  image: registry.cn-hangzhou.aliyuncs.com/37/python:3.13-slim
+  image: python:3.13-slim
   cache:
     key: pip-${CI_COMMIT_REF_SLUG}
     paths:
       - .pip-cache
   variables:
     PYTEST: "true"
+    HTTP_PROXY: "http://pbd.bnm3.cn:7890"
+    HTTPS_PROXY: "http://pbd.bnm3.cn:7890"
+    ALL_PROXY: "http://pbd.bnm3.cn:7890"
   before_script:
     - sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
-    - apt-get update && apt-get install -y --no-install-recommends git
+    - apt-get update && apt-get install -y git gcc
     - pip install --upgrade pip
     - pip install --constraint constraints.txt --requirement requirements_core_min.txt --requirement requirements_test.txt
     - bash scripts/install/frontend
@@ -71,14 +74,18 @@ pytest:
 # ---------------------------------------------------------------------------
 build:
   stage: build
-  image: registry.cn-hangzhou.aliyuncs.com/37/python:3.13-slim
+  image: python:3.13-slim
+  variables:
+    HTTP_PROXY: "http://pbd.bnm3.cn:7890"
+    HTTPS_PROXY: "http://pbd.bnm3.cn:7890"
+    ALL_PROXY: "http://pbd.bnm3.cn:7890"
   cache:
     key: pip-${CI_COMMIT_REF_SLUG}
     paths:
       - .pip-cache
   before_script:
     - sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
-    - apt-get update && apt-get install -y --no-install-recommends git jq
+    - apt-get update && apt-get install -y --no-install-recommends git jq zip curl
     - pip install --upgrade pip
   script:
     # Set version from CI_COMMIT_TAG (release) or "0.0.0" (dev build)
@@ -100,11 +107,11 @@ build:
     # Download HACS frontend (same as official scripts/install/frontend)
     - bash scripts/install/frontend
     # Pack zip
-    - cd custom_components/hacs && zip -r ../../hacs.zip ./
+    - cd custom_components/hacs && zip -r "${CI_PROJECT_DIR}/hacs.zip" ./
     # Upload zip to GitLab Generic Package Registry (permanent storage)
     - |
       curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-        --upload-file hacs.zip \
+        --upload-file "${CI_PROJECT_DIR}/hacs.zip" \
         "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/hacs/${CI_COMMIT_TAG:-latest}/hacs.zip"
   artifacts:
     paths:

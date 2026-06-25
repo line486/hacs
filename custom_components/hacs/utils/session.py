@@ -11,8 +11,6 @@ Supported environment variables (case-insensitive, standard ``aiohttp`` /
 * ``HTTP_PROXY`` / ``http_proxy``
 * ``ALL_PROXY`` / ``all_proxy``
 * ``NO_PROXY`` / ``no_proxy``
-
-You can also set ``HACS_PROXY_URL`` to force a specific proxy for HACS only.
 """
 
 from __future__ import annotations
@@ -23,11 +21,6 @@ import os
 from aiohttp import ClientSession, TCPConnector
 
 _LOGGER = logging.getLogger(__name__)
-
-#: Read-once: explicit HACS proxy URL (optional).
-HACS_PROXY_URL: str | None = os.environ.get("HACS_PROXY_URL") or os.environ.get(
-    "hacs_proxy_url"
-)
 
 #: Common environment variable names for a generic proxy.
 _PROXY_ENV_NAMES = (
@@ -51,25 +44,23 @@ def _read_env_proxy() -> str | None:
 
 def is_proxy_configured() -> bool:
     """Return ``True`` when *any* proxy setting is present in the environment."""
-    if HACS_PROXY_URL:
-        return True
     return _read_env_proxy() is not None
 
 
 def get_active_proxy_url() -> str | None:
     """Return the proxy URL that HACS would use, or ``None``."""
-    return HACS_PROXY_URL or _read_env_proxy()
+    return _read_env_proxy()
 
 
 async def async_create_hacs_session() -> ClientSession:
     """Create an :class:`aiohttp.ClientSession` with proxy support.
 
-    If a proxy is detected (via ``HACS_PROXY_URL`` or the standard
-    ``HTTPS_PROXY`` / ``HTTP_PROXY`` / ``ALL_PROXY`` variables) the session
-    is created with ``trust_env=True`` so that ``aiohttp`` applies it
-    automatically.  Certificate verification is also disabled when a proxy is
-    active, because many corporate / transparent proxies perform TLS
-    interception and present a self-signed certificate.
+    If a proxy is detected via the standard ``HTTPS_PROXY`` /
+    ``HTTP_PROXY`` / ``ALL_PROXY`` variables the session is created with
+    ``trust_env=True`` so that ``aiohttp`` applies it automatically.
+    Certificate verification is also disabled when a proxy is active,
+    because many corporate / transparent proxies perform TLS interception
+    and present a self-signed certificate.
 
     If **no** proxy is configured the function falls back to a plain session so
     that the behaviour is identical to the original code.
@@ -81,7 +72,7 @@ async def async_create_hacs_session() -> ClientSession:
         # trust_env=True makes aiohttp read *_PROXY / *_proxy automatically.
         # ssl=False is intentional: most MITM/corporate proxies replace the
         # upstream certificate with their own (often self-signed) CA.
-        connector = TCPConnector(ssl=False)  # noqa: S504
+        connector = TCPConnector(ssl=False)
         session = ClientSession(trust_env=True, connector=connector)
     else:
         session = ClientSession()

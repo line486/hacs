@@ -353,8 +353,18 @@ def snapshots(snapshot: Snapshot) -> SnapshotFixture:
 async def proxy_session(hass: HomeAssistant) -> Generator:
     """Fixture for a proxy_session."""
     mock_session = await client_session_proxy(hass)
+    # HACS needs its own session so that closing it doesn't close the HA session
+    hacs_mock_session = await client_session_proxy(hass)
+
+    async def _noop_close():
+        pass
+
+    hacs_mock_session.close = _noop_close
     with patch(
         "homeassistant.helpers.aiohttp_client.async_get_clientsession", return_value=mock_session,
+    ), patch(
+        "custom_components.hacs.async_create_hacs_session",
+        return_value=hacs_mock_session,
     ), patch("scripts.data.generate_category_data.ClientSession", ProxyClientSession), patch(
         "aiohttp.ClientSession", ProxyClientSession,
     ):
