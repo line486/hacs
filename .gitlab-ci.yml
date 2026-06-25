@@ -1,0 +1,138 @@
+stages:
+  - lint
+  - test
+  - build
+  - publish
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  PIP_INDEX_URL: "https://mirrors.aliyun.com/pypi/simple/"
+  PIP_TRUSTED_HOST: "mirrors.aliyun.com"
+  DEBIAN_FRONTEND: "noninteractive"
+
+# ---------------------------------------------------------------------------
+# Lint – mirrors the GitHub Actions lint workflow
+# ---------------------------------------------------------------------------
+lint:
+  stage: lint
+  image: registry.cn-hangzhou.aliyuncs.com/37/python:3.13-slim
+  cache:
+    key: pip-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .pip-cache
+  before_script:
+    - sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+    - apt-get update && apt-get install -y --no-install-recommends git
+    - pip install --upgrade pip
+    - pip install --constraint constraints.txt --requirement requirements_lint.txt
+  script:
+    - pre-commit run --show-diff-on-failure --hook-stage manual --all-files --config .github/pre-commit-config.yaml
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+lint-json:
+  stage: lint
+  image: registry.cn-hangzhou.aliyuncs.com/37/python:3.13-slim
+  script:
+    - sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+    - apt-get update && apt-get install -y --no-install-recommends jq
+    - jq -r -e -c . tests/fixtures/*.json
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ---------------------------------------------------------------------------
+# Test
+# ---------------------------------------------------------------------------
+pytest:
+  stage: test
+  image: registry.cn-hangzhou.aliyuncs.com/37/python:3.13-slim
+  cache:
+    key: pip-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .pip-cache
+  variables:
+    PYTEST: "true"
+  before_script:
+    - sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+    - apt-get update && apt-get install -y --no-install-recommends git
+    - pip install --upgrade pip
+    - pip install --constraint constraints.txt --requirement requirements_core_min.txt --requirement requirements_test.txt
+    - bash scripts/install/frontend
+  script:
+    - bash scripts/test
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ---------------------------------------------------------------------------
+# Build – download frontend & pack zip (mirrors publish.yml)
+# ---------------------------------------------------------------------------
+build:
+  stage: build
+  image: registry.cn-hangzhou.aliyuncs.com/37/python:3.13-slim
+  cache:
+    key: pip-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .pip-cache
+  before_script:
+    - sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+    - apt-get update && apt-get install -y --no-install-recommends git jq
+    - pip install --upgrade pip
+  script:
+    # Set version from CI_COMMIT_TAG (release) or "0.0.0" (dev build)
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION="$CI_COMMIT_TAG"
+        # Validate semver format
+        if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$'; then
+          echo "ERROR: '$VERSION' is not a valid version tag"
+          exit 1
+        fi
+        # Update MINIMUM_HA_VERSION in const.py
+        HA_VERSION=$(jq -r .homeassistant hacs.json)
+        sed -i "s/MINIMUM_HA_VERSION = .*/MINIMUM_HA_VERSION = \"${HA_VERSION}\"/" custom_components/hacs/const.py
+      else
+        VERSION="0.0.0"
+      fi
+      python3 scripts/update/manifest.py --version "$VERSION"
+    # Download HACS frontend (same as official scripts/install/frontend)
+    - bash scripts/install/frontend
+    # Pack zip
+    - cd custom_components/hacs && zip -r ../../hacs.zip ./
+    # Upload zip to GitLab Generic Package Registry (permanent storage)
+    - |
+      curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file hacs.zip \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/hacs/${CI_COMMIT_TAG:-latest}/hacs.zip"
+  artifacts:
+    paths:
+      - custom_components/hacs/
+    expire_in: 7 days
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ---------------------------------------------------------------------------
+# Publish – attach zip to a GitLab Release (tag pipelines only)
+# ---------------------------------------------------------------------------
+publish:
+  stage: publish
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - job: build
+      artifacts: true
+  script:
+    - echo "Creating release for $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: "Release $CI_COMMIT_TAG"
+    assets:
+      links:
+        - name: hacs.zip
+          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/hacs/${CI_COMMIT_TAG}/hacs.zip"
+          filepath: /hacs.zip
+          link_type: package
+  rules:
+    - if: $CI_COMMIT_TAG
